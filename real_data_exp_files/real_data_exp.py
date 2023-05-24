@@ -34,7 +34,7 @@ class RealDataExp:
         self.num_items_features = self.current_rest_df.shape[0]
         self.f_star = FStarWarraper(get_f_star(self.orig_df, force_to_train=False))
         self.loss = Loss(self.num_items_features, top_k=args.k, sig_tau=args.tau_sig, tau_ndcg=args.tau_ndcg,
-                    tau_div=args.tau_div)
+                    tau_div=args.tau_div, use_entropy_div=args.entropy)
         self.strategic_model = args.strategic_model
         self.saving_model_folder = RealDataExp.create_saving_path(models_yelp, self.k, self.alpha, self.strategic_model, self.target_ndcg)
         self.saving_strategic_data_folder = RealDataExp.create_saving_path(strategic_data_folder, self.k, self.alpha, self.strategic_model, self.target_ndcg)
@@ -104,7 +104,7 @@ class RealDataExp:
         print(f'looking for ndcg close to {self.target_ndcg}')
         lambda_low, lambda_high = self.line_search_params.lambda_low, self.line_search_params.lambda_high
         most_fit_ndcg = None
-        most_fit_div = -1
+        most_fit_div = -float('inf')
         most_fit_model_state_dict = None
         most_fit_lambda = None
         for i in range(self.line_search_params.num_tries):

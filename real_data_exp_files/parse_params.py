@@ -19,6 +19,7 @@ def parse_args():
     parser.add_argument("--start_time", dest='start_time', type=int, required=False, default=0)
     parser.add_argument("--end_time", dest='end_time', type=int, required=False, default=1)
     parser.add_argument("--random", dest='random', action='store_true', required=False, default=False)
+    parser.add_argument("--entropy", dest='entropy', action='store_true', required=False, default=False)
 
 
 
