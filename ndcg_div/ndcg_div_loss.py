@@ -1,10 +1,12 @@
 import torch
 from ndcg_div.disimilarity_metrics import dissimilarity_cosine as dissimilarity_metric
+from torch.distributions.beta import Beta
+from torch.distributions.uniform import Uniform
 
 
 class Loss(torch.nn.Module):
     def __init__(self, first_user_feature: int, discount_function: str ='log', top_k: int = 10, sig_tau: float = 1,
-                 tau_ndcg: float = 0.1, tau_div: float = 0.1):
+                 tau_ndcg: float = 0.1, tau_div: float = 0.1, use_entropy_div=False):
         '''
 
         :param first_user_feature: The first index of the user features. Each feature vector is stack of item feature
@@ -29,6 +31,7 @@ class Loss(torch.nn.Module):
         self.sig_tau = sig_tau
         self.tau_ndcg = tau_ndcg
         self.tau_div = tau_div
+        self.use_entropy_div = use_entropy_div
 
     @staticmethod
     def sinkhorn_scaling(mat: torch.tensor, tol: float = 1e-6, max_iter: int = 5, default_eps: float = 1e-10) -> torch.tensor:
@@ -150,7 +153,30 @@ class Loss(torch.nn.Module):
             real_rank_by_model_matrix.sum(dim=(1, 2)))
         return approx_diversity, diversity_score
 
+    def calc_entropy(self, first_k):
+        first_k = (first_k + 1)/2
+        noise = torch.distributions.uniform.Uniform(-0.001, 0.001).sample(first_k.shape).to(self.device)
+        first_k = first_k + noise
+        mean_x = first_k.mean(dim=1)
+        s_x = first_k.var(dim=1)
+        a = mean_x * (mean_x * (1 - mean_x) / s_x - 1)
+        b = (1 - mean_x)*(mean_x * (1 - mean_x) / s_x - 1)
+        m = Beta(a, b)
+        entropy = m.entropy()
+        return entropy.mean(dim=1)
 
+    def calc_entropy_div_reg(self, batch: torch.tensor, model_score: torch.tensor, p_sort_matrix: torch.tensor) -> \
+            (torch.tensor, torch.tensor):
+        batch = batch[:, :, :self.first_user_feature]
+        num_item = batch.shape[1]
+        first_approx = p_sort_matrix @ batch.float()
+        first_k_approx = first_approx[:, :self.k, :]
+        expanded_score = model_score.unsqueeze(-1).expand(batch.shape[0], batch.shape[1], self.first_user_feature)
+        first_k_real = batch.gather(dim=1, index=expanded_score.sort(dim=1, descending=True)[1])[:, :self.k, :]
+
+        real_entropy = self.calc_entropy(first_k_real)
+        approx_entropy = self.calc_entropy(first_k_approx)
+        return approx_entropy, real_entropy
 
     def forward(self, batch: torch.tensor, model_score_for_div: torch.tensor, model_score_for_ndcg: torch.tensor,
                 relevance: torch.tensor) -> (torch.tensor, torch.tensor, torch.tensor, torch.tensor):
@@ -165,7 +191,10 @@ class Loss(torch.nn.Module):
         p_sort_for_ndcg = Loss.calc_p_sort(model_score_for_ndcg, self.device, self.tau_ndcg)
         approx_ndcg, ndcg_score = self.calc_ndcg_loss(p_sort_for_ndcg, model_score_for_ndcg, relevance)
         p_sort_for_div = self.calc_p_sort(model_score_for_div, self.device, self.tau_div)
-        approx_diversity, diversity_score = self.calc_diversity_reg(batch, model_score_for_div, p_sort_for_div)
+        if self.use_entropy_div:
+            approx_diversity, diversity_score = self.calc_entropy_div_reg(batch, model_score_for_div, p_sort_for_div)
+        else:
+            approx_diversity, diversity_score = self.calc_diversity_reg(batch, model_score_for_div, p_sort_for_div)
         return approx_ndcg, ndcg_score, approx_diversity, diversity_score
 
 
